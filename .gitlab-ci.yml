@@ -1,0 +1,80 @@
+
+# Defines the stages of the CI/CD pipeline
+stages:
+  - build
+  # - test # Add a test stage later if needed (e.g., linting, unit tests)
+  - deploy
+
+variables:
+  # Use TLS with the dind service, recommended for security
+  DOCKER_TLS_CERTDIR: "/certs"
+  # Define the image name using GitLab predefined variables
+  # IMAGE_TAG: $CI_REGISTRY_IMAGE:$CI_COMMIT_REF_SLUG
+  # Define image name for PocketServer application
+  # Replace 'your-group/your-project' with your actual GitLab group/project path
+  # Or use $CI_PROJECT_PATH which resolves to group/project
+  IMAGE_TAG: $CI_REGISTRY_IMAGE/pocketserver:$CI_COMMIT_SHA
+
+# Use the official Docker image with Docker-in-Docker (dind) service
+# This allows building Docker images within the CI job
+image: docker:latest
+
+services:
+  - docker:dind
+
+before_script:
+  # Login to the GitLab Container Registry
+  # $CI_REGISTRY_USER and $CI_REGISTRY_PASSWORD are predefined variables
+  - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin $CI_REGISTRY
+
+build_app:
+  stage: build
+  script:
+    # Build the Docker image using the Dockerfile in the root directory
+    - echo "Building Docker image: $IMAGE_TAG"
+    - docker build -t $IMAGE_TAG .
+    # Push the built image to the GitLab Container Registry
+    - echo "Pushing Docker image: $IMAGE_TAG"
+    - docker push $IMAGE_TAG
+  rules:
+    # Run this job only for changes pushed to the main branch
+    - if: '$CI_COMMIT_BRANCH == "main"'
+
+# Placeholder for a test stage (e.g., linting, unit tests)
+# test_app:
+#   stage: test
+#   image: node:18-alpine # Use a Node.js image for testing
+#   script:
+#     - echo "Running tests..."
+#     - npm install --frozen-lockfile
+#     - npm run lint
+#     - npm run typecheck
+#     # Add actual test commands here
+#   rules:
+#     - if: '$CI_COMMIT_BRANCH == "main"'
+
+# Placeholder for deployment stage
+# This stage would typically involve SSHing into the EC2 instance
+# and pulling/running the new Docker image using docker-compose
+deploy_app:
+  stage: deploy
+  script:
+    - echo "Deploying image $IMAGE_TAG..."
+    # Add deployment commands here. Example steps:
+    # 1. SSH into your EC2 instance
+    #    - Ensure SSH keys are configured in GitLab CI/CD variables
+    # 2. Navigate to the deployment directory
+    # 3. Login to GitLab registry on the server: docker login $CI_REGISTRY -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD
+    # 4. Pull the latest image: docker pull $IMAGE_TAG
+    # 5. Stop and remove the old container (if using docker-compose, 'docker-compose down')
+    # 6. Start the new container (if using docker-compose, update image tag in compose file and run 'docker-compose up -d')
+    - echo "Deployment steps need to be configured based on your EC2 setup."
+    - echo "Example: ssh user@your-ec2-ip 'cd /path/to/app && docker login ... && docker pull $IMAGE_TAG && docker-compose down && docker-compose up -d'"
+  rules:
+    # Run this job only for changes pushed to the main branch
+    - if: '$CI_COMMIT_BRANCH == "main"'
+  # You might need environment variables for SSH keys, server IP, etc.
+  # environment:
+  #   name: production
+  #   url: http://your-ec2-instance-ip:9002 # Optional: URL to the deployed app
+```

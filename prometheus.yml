@@ -1,0 +1,33 @@
+
+# prometheus.yml
+
+global:
+  scrape_interval: 15s # How frequently to scrape targets by default.
+  evaluation_interval: 15s # How frequently to evaluate rules.
+
+scrape_configs:
+  # Scrape Prometheus itself
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090'] # Prometheus default port
+
+  # Scrape the PocketServer application
+  - job_name: 'pocketserver'
+    # Assuming PocketServer runs as a service named 'pocketserver' in Docker Compose
+    # and exposes metrics on port 9002 (or a dedicated metrics port if implemented).
+    # NOTE: PocketServer currently does NOT expose Prometheus metrics.
+    # You would need to:
+    #   1. Add a metrics library (like prom-client) to the Node.js app.
+    #   2. Instrument the code to track requests, errors, latency, etc.
+    #   3. Expose a /metrics endpoint.
+    # OR Use an exporter like node-exporter to get system-level metrics from the container/host.
+    static_configs:
+      - targets: ['pocketserver:9002'] # Target the pocketserver service container
+      # - targets: ['node-exporter:9100'] # Uncomment if using node-exporter sidecar/service
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+          # - alertmanager:9093 # Example if you add Alertmanager service later
+```
