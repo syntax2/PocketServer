@@ -1,3 +1,4 @@
+
 import { type NextRequest, NextResponse } from 'next/server';
 import path from 'path';
 import fs from 'fs/promises';
@@ -8,11 +9,10 @@ import mime from 'mime-types'; // Using mime-types to determine content type
 // Define the root directory for static files (relative to the project root)
 const STATIC_ROOT = path.join(process.cwd(), 'public', 'static'); // Serving from public/static
 
-// Ensure the static directory exists
+// Ensure the static directory exists (No changes needed here, keeping existing logic)
 async function ensureStaticDirExists() {
   try {
     await fs.mkdir(STATIC_ROOT, { recursive: true });
-    // Create a placeholder index.html if it doesn't exist
     const indexPath = path.join(STATIC_ROOT, 'index.html');
     if (!existsSync(indexPath)) {
       await fs.writeFile(indexPath, `
@@ -28,12 +28,12 @@ async function ensureStaticDirExists() {
     <h1>Welcome to PocketServer!</h1>
     <p>This is a static HTML file served by the server.</p>
     <p>You can place your static files (HTML, CSS, JS, images) in the <code>public/static</code> directory.</p>
+    <p><a href="/api/serve/another.html">Try another page</a></p>
     <script src="script.js"></script>
 </body>
 </html>
       `);
     }
-    // Create a placeholder style.css if it doesn't exist
     const cssPath = path.join(STATIC_ROOT, 'style.css');
      if (!existsSync(cssPath)) {
         await fs.writeFile(cssPath, `
@@ -47,37 +47,109 @@ body {
 h1 {
     color: #008080; /* Teal */
 }
+code {
+    background-color: #e0e0e0;
+    padding: 2px 5px;
+    border-radius: 3px;
+}
+a {
+    color: #005050; /* Darker Teal */
+}
         `);
      }
-    // Create a placeholder script.js if it doesn't exist
     const jsPath = path.join(STATIC_ROOT, 'script.js');
      if (!existsSync(jsPath)) {
         await fs.writeFile(jsPath, `
 console.log('PocketServer static script loaded!');
+
+document.addEventListener('DOMContentLoaded', () => {
+    console.log('Static page DOM fully loaded and parsed');
+});
         `);
      }
+     const anotherPath = path.join(STATIC_ROOT, 'another.html');
+      if (!existsSync(anotherPath)) {
+          await fs.writeFile(anotherPath, `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Another Page</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <h1>Another Static Page</h1>
+    <p>This demonstrates serving a different HTML file.</p>
+    <p><a href="/api/serve/index.html">Back to Home</a></p>
+    <script src="script.js"></script>
+</body>
+</html>
+          `);
+      }
   } catch (error) {
     console.error("Failed to ensure static directory exists:", error);
-    // If we can't create the dir, the server likely can't serve files.
-    // Depending on requirements, you might want to throw or handle this.
   }
 }
 
 // Call this once when the module loads
 ensureStaticDirExists();
 
+// Helper to extract relevant headers for logging
+function getLoggableHeaders(headers: Headers): Record<string, string> {
+    const loggable: Record<string, string> = {};
+    const commonHeaders = ['host', 'user-agent', 'content-type', 'accept', 'referer'];
+    for (const key of commonHeaders) {
+        if (headers.has(key)) {
+            loggable[key] = headers.get(key)!;
+        }
+    }
+    return loggable;
+}
+
+// Helper to safely parse request body
+async function parseRequestBody(request: NextRequest): Promise<{ body?: any; error?: string }> {
+    const contentType = request.headers.get('content-type')?.split(';')[0];
+    try {
+        if (contentType === 'application/json') {
+            const body = await request.json();
+            return { body };
+        } else if (contentType === 'application/x-www-form-urlencoded' || contentType === 'text/plain') {
+            const body = await request.text();
+            // Limit logged body size
+             const truncatedBody = body.length > 200 ? body.substring(0, 200) + '...' : body;
+             return { body: truncatedBody };
+        } else if (request.body) {
+             // Attempt to read as text for other types, but handle potential binary data
+             try {
+               const body = await request.text();
+               const truncatedBody = body.length > 200 ? body.substring(0, 200) + '...' : body;
+               return { body: `(Non-JSON/Text Body, truncated): ${truncatedBody}` };
+             } catch {
+               return { body: '(Binary or Unreadable Body)' };
+             }
+        } else {
+            return { body: '(No Body)' };
+        }
+    } catch (e: any) {
+        console.error("Error parsing request body:", e);
+        return { error: `Failed to parse body: ${e.message}` };
+    }
+}
+
 
 export async function GET(
   request: NextRequest,
   { params }: { params: { filePath?: string[] } }
 ) {
-  const requestedPath = params.filePath?.join('/') || 'index.html'; // Default to index.html if no path specified
+  const requestedPath = params.filePath?.join('/') || 'index.html'; // Default to index.html
   const method = request.method;
-  const urlPath = `/api/serve/${params.filePath?.join('/') ?? ''}`; // Log the accessed API path
+  const urlPath = `/api/serve/${params.filePath?.join('/') ?? ''}`;
+  const headers = getLoggableHeaders(request.headers);
 
   // Prevent directory traversal attacks
   if (requestedPath.includes('..')) {
-    addLog({ method, path: urlPath, status: 400, message: 'Bad Request: Invalid path' });
+    addLog({ method, path: urlPath, status: 400, message: 'Bad Request: Invalid path', headers });
     return NextResponse.json({ error: 'Invalid path' }, { status: 400 });
   }
 
@@ -96,7 +168,7 @@ export async function GET(
          await fs.access(finalPath); // Check if index.html exists in the dir
        } catch {
          // If no index.html, deny directory listing
-          addLog({ method, path: urlPath, status: 403, message: 'Forbidden: Directory listing not allowed' });
+          addLog({ method, path: urlPath, status: 403, message: 'Forbidden: Directory listing not allowed', headers });
           return NextResponse.json({ error: 'Directory listing not allowed' }, { status: 403 });
        }
     }
@@ -107,7 +179,7 @@ export async function GET(
     // Determine the content type based on the file extension
     const contentType = mime.lookup(finalPath) || 'application/octet-stream'; // Default if type unknown
 
-    addLog({ method, path: urlPath, status: 200, message: `Served: ${requestedPath}` });
+    addLog({ method, path: urlPath, status: 200, message: `Served: ${requestedPath}`, headers });
     return new NextResponse(fileContent, {
       status: 200,
       headers: {
@@ -117,12 +189,12 @@ export async function GET(
 
   } catch (error: any) {
     if (error.code === 'ENOENT') {
-      addLog({ method, path: urlPath, status: 404, message: `Not Found: ${requestedPath}` });
+      addLog({ method, path: urlPath, status: 404, message: `Not Found: ${requestedPath}`, headers });
       // Try serving index.html from the root if the specific file wasn't found
       const rootIndexPath = path.join(STATIC_ROOT, 'index.html');
       try {
         const rootIndexContent = await fs.readFile(rootIndexPath);
-        addLog({ method, path: urlPath, status: 200, message: `Served fallback: index.html` });
+        addLog({ method, path: urlPath, status: 200, message: `Served fallback: index.html`, headers });
         return new NextResponse(rootIndexContent, {
           status: 200,
           headers: { 'Content-Type': 'text/html' },
@@ -132,32 +204,66 @@ export async function GET(
       }
 
     } else if (error.code === 'EISDIR') {
-       // This case is now handled above by checking for index.html inside directories
-       addLog({ method, path: urlPath, status: 403, message: 'Forbidden: Directory listing not allowed' });
+       addLog({ method, path: urlPath, status: 403, message: 'Forbidden: Directory listing not allowed', headers });
        return NextResponse.json({ error: 'Directory listing not allowed' }, { status: 403 });
     }
     else {
       console.error(`Server Error processing ${method} ${urlPath}:`, error);
-      addLog({ method, path: urlPath, status: 500, message: 'Internal Server Error' });
+      addLog({ method, path: urlPath, status: 500, message: 'Internal Server Error', headers });
       return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
     }
   }
 }
 
-// Optional: Handle other methods if needed, returning 405 Method Not Allowed
+// Handle POST requests
 export async function POST(request: NextRequest, { params }: { params: { filePath?: string[] } }) {
     const urlPath = `/api/serve/${params.filePath?.join('/') ?? ''}`;
-    addLog({ method: request.method, path: urlPath, status: 405, message: 'Method Not Allowed'});
-    return NextResponse.json({ error: 'Method Not Allowed' }, { status: 405 });
+    const method = request.method;
+    const headers = getLoggableHeaders(request.headers);
+    const { body, error } = await parseRequestBody(request);
+
+    let message = `Received POST request.`;
+    if (error) {
+        message += ` Body parsing error: ${error}`;
+        addLog({ method, path: urlPath, status: 400, message, headers, requestBody: body });
+        return NextResponse.json({ error: 'Bad Request', detail: error }, { status: 400 });
+    } else {
+        message += ` Body logged (truncated if large).`;
+        addLog({ method, path: urlPath, status: 200, message, headers, requestBody: body });
+        // You might want to do something with the body here,
+        // but for now, we just acknowledge receipt.
+        return NextResponse.json({ message: 'POST request received', data: body }, { status: 200 });
+    }
 }
+
+// Handle PUT requests
 export async function PUT(request: NextRequest, { params }: { params: { filePath?: string[] } }) {
     const urlPath = `/api/serve/${params.filePath?.join('/') ?? ''}`;
-    addLog({ method: request.method, path: urlPath, status: 405, message: 'Method Not Allowed'});
-    return NextResponse.json({ error: 'Method Not Allowed' }, { status: 405 });
+    const method = request.method;
+    const headers = getLoggableHeaders(request.headers);
+    const { body, error } = await parseRequestBody(request);
+
+    let message = `Received PUT request.`;
+     if (error) {
+         message += ` Body parsing error: ${error}`;
+         addLog({ method, path: urlPath, status: 400, message, headers, requestBody: body });
+         return NextResponse.json({ error: 'Bad Request', detail: error }, { status: 400 });
+     } else {
+         message += ` Body logged (truncated if large).`;
+         addLog({ method, path: urlPath, status: 200, message, headers, requestBody: body });
+         // Acknowledge receipt
+         return NextResponse.json({ message: 'PUT request received', data: body }, { status: 200 });
+     }
 }
-export async function DELETE(request: NextRequest, { params }: { params: { filePath?: string[] } }) {
+
+// Default handler for unsupported methods
+async function handleUnsupportedMethod(request: NextRequest, { params }: { params: { filePath?: string[] } }) {
     const urlPath = `/api/serve/${params.filePath?.join('/') ?? ''}`;
-    addLog({ method: request.method, path: urlPath, status: 405, message: 'Method Not Allowed'});
+    const method = request.method;
+    const headers = getLoggableHeaders(request.headers);
+    addLog({ method, path: urlPath, status: 405, message: 'Method Not Allowed', headers });
     return NextResponse.json({ error: 'Method Not Allowed' }, { status: 405 });
 }
-// etc. for other methods
+
+// Assign the handler to other methods
+export { handleUnsupportedMethod as DELETE, handleUnsupportedMethod as PATCH, handleUnsupportedMethod as HEAD, handleUnsupportedMethod as OPTIONS };
